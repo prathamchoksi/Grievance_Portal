@@ -1,27 +1,8 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-
-const parseAdmins = (raw) => {
-  // Format: id,password,scope|id,password,scope
-  // Example: Mess,pass123,Mess|General,admin123,all
-  if (!raw || typeof raw !== 'string') {
-    return []
-  }
-
-  return raw
-    .split('|')
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .map((entry) => {
-      const [id, password, scope] = entry.split(',').map((part) => (part ?? '').trim())
-      if (!id || !password || !scope) {
-        return null
-      }
-
-      return { id, password, scope }
-    })
-    .filter(Boolean)
-}
+import { signInWithEmailAndPassword } from 'firebase/auth'
+import { auth } from '../firebase.js'
+import { ADMIN_IDS, adminIdToEmail, isAllowedAdminId, normalizeAdminId } from '../admins.js'
 
 function Login() {
   const [adminId, setAdminId] = useState('')
@@ -29,26 +10,36 @@ function Login() {
   const [error, setError] = useState('')
   const navigate = useNavigate()
 
-  const handleSubmit = (event) => {
+  const handleSubmit = async (event) => {
     event.preventDefault()
     setError('')
 
-    const admins = parseAdmins(import.meta.env.VITE_ADMINS)
-    if (admins.length === 0) {
-      setError('Admin login is not configured. Set VITE_ADMINS in .env and restart the dev server.')
+    const normalizedId = normalizeAdminId(adminId)
+    if (!isAllowedAdminId(normalizedId)) {
+      setError('Unknown admin ID')
       return
     }
 
-    const match = admins.find((item) => item.id === adminId && item.password === password)
-    if (!match) {
-      setError('Invalid admin ID or password')
-      return
-    }
+    const email = adminIdToEmail(normalizedId)
 
-    localStorage.setItem('isAdmin', 'true')
-    localStorage.setItem('adminScope', match.scope)
-    localStorage.setItem('adminId', match.id)
-    navigate('/admin')
+    try {
+      await signInWithEmailAndPassword(auth, email, password)
+      localStorage.setItem('isAdmin', 'true')
+      localStorage.setItem('adminId', normalizedId)
+      navigate('/admin')
+    } catch (authError) {
+      const code = authError?.code || ''
+      if (code === 'auth/invalid-credential' || code === 'auth/wrong-password') {
+        setError('Invalid password')
+        return
+      }
+      if (code === 'auth/user-not-found') {
+        setError('Admin account not found in Firebase Auth')
+        return
+      }
+
+      setError('Login failed. Please try again.')
+    }
   }
 
   return (
@@ -59,14 +50,21 @@ function Login() {
       <form className="card" onSubmit={handleSubmit}>
         <div className="field">
           <label htmlFor="adminId">Admin ID</label>
-          <input
+          <select
             id="adminId"
-            type="text"
             value={adminId}
             onChange={(event) => setAdminId(event.target.value)}
-            placeholder="e.g. Mess, Hostel, General"
             required
-          />
+          >
+            <option value="" disabled>
+              Select admin category
+            </option>
+            {ADMIN_IDS.map((id) => (
+              <option key={id} value={id}>
+                {id}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="field">
@@ -86,7 +84,7 @@ function Login() {
           <button className="button" type="submit">
             Login
           </button>
-          <Link className="nav-link" to="/">
+          <Link className="button" to="/">
             Back to Home
           </Link>
         </div>

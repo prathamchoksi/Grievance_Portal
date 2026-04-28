@@ -43,6 +43,15 @@ function Categories() {
         </div>
       </main>
 
+      <Link
+        to="/"
+        className="button fixed bottom-8 left-1/2 -translate-x-1/2 inline-flex items-center gap-2 z-10"
+        style={{ textDecoration: 'none' }}
+      >
+        <span className="material-symbols-outlined text-[18px]">home</span>
+        Home
+      </Link>
+
       <div className="fixed top-0 left-0 w-full h-full pointer-events-none -z-10 bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] [background-size:40px_40px] opacity-30" />
     </div>
   )

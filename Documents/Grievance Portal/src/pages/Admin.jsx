@@ -1,7 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
+import {
+  EmailAuthProvider,
+  onAuthStateChanged,
+  reauthenticateWithCredential,
+  signOut,
+  updatePassword,
+} from 'firebase/auth'
 import { collection, getDocs, orderBy, query } from 'firebase/firestore'
-import { db } from '../firebase.js'
+import { auth, db } from '../firebase.js'
+import { adminIdToScope, emailToAdminId } from '../admins.js'
 
 const categories = [
   'All',
@@ -32,9 +40,25 @@ function Admin() {
   const [grievances, setGrievances] = useState([])
   const [categoryFilter, setCategoryFilter] = useState('All')
   const [loading, setLoading] = useState(true)
-  const isAdmin = localStorage.getItem('isAdmin') === 'true'
-  const adminScope = localStorage.getItem('adminScope') || 'all'
+  const [authReady, setAuthReady] = useState(false)
+  const [firebaseUser, setFirebaseUser] = useState(null)
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false)
+  const [passwordCurrent, setPasswordCurrent] = useState('')
+  const [passwordNext, setPasswordNext] = useState('')
+  const [passwordStatus, setPasswordStatus] = useState({ type: '', message: '' })
+
+  const adminId = emailToAdminId(firebaseUser?.email)
+  const adminScope = adminId ? adminIdToScope(adminId) : 'all'
   const isScoped = adminScope !== 'all'
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setFirebaseUser(user)
+      setAuthReady(true)
+    })
+
+    return () => unsubscribe()
+  }, [])
 
   useEffect(() => {
     const fetchGrievances = async () => {
@@ -53,10 +77,15 @@ function Admin() {
   }, [])
 
   useEffect(() => {
-    if (isScoped) {
-      setCategoryFilter(adminScope)
-    }
+    setCategoryFilter(isScoped ? adminScope : 'All')
   }, [adminScope, isScoped])
+
+  useEffect(() => {
+    if (authReady && firebaseUser && !adminId) {
+      handleLogout()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminId, authReady, firebaseUser])
 
   const filtered = useMemo(() => {
     const scopeFiltered = isScoped
@@ -70,14 +99,63 @@ function Admin() {
     return scopeFiltered.filter((item) => item.category === categoryFilter)
   }, [adminScope, categoryFilter, grievances, isScoped])
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     localStorage.removeItem('isAdmin')
     localStorage.removeItem('adminScope')
     localStorage.removeItem('adminId')
+    await signOut(auth).catch(() => {})
     navigate('/login', { replace: true })
   }
 
-  if (!isAdmin) {
+  const handleChangePassword = async (event) => {
+    event.preventDefault()
+    setPasswordStatus({ type: '', message: '' })
+
+    if (!firebaseUser?.email) {
+      setPasswordStatus({ type: 'error', message: 'Not signed in.' })
+      return
+    }
+
+    if (!passwordCurrent || !passwordNext) {
+      setPasswordStatus({ type: 'error', message: 'Enter current and new password.' })
+      return
+    }
+
+    try {
+      const credential = EmailAuthProvider.credential(firebaseUser.email, passwordCurrent)
+      await reauthenticateWithCredential(firebaseUser, credential)
+      await updatePassword(firebaseUser, passwordNext)
+      setPasswordCurrent('')
+      setPasswordNext('')
+      setPasswordStatus({ type: 'success', message: 'Password updated successfully.' })
+    } catch (error) {
+      const code = error?.code || ''
+      if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
+        setPasswordStatus({ type: 'error', message: 'Current password is incorrect.' })
+        return
+      }
+      if (code === 'auth/weak-password') {
+        setPasswordStatus({ type: 'error', message: 'New password is too weak.' })
+        return
+      }
+
+      setPasswordStatus({ type: 'error', message: 'Failed to update password. Please try again.' })
+    }
+  }
+
+  if (!authReady) {
+    return (
+      <div className="bg-surface text-on-surface min-h-screen flex items-center justify-center">
+        <span className="font-body-md text-body-md text-on-surface-variant">Loading...</span>
+      </div>
+    )
+  }
+
+  if (!firebaseUser) {
+    return <Navigate to="/login" replace />
+  }
+
+  if (!adminId) {
     return <Navigate to="/login" replace />
   }
 
@@ -243,7 +321,111 @@ function Admin() {
             </button>
           </div>
         </div>
+
+        <div className="mt-10 flex items-center justify-between gap-6 flex-wrap">
+          <div>
+            <div className="font-label-sm text-label-sm text-on-surface-variant uppercase">Signed in as</div>
+            <div className="font-label-md text-label-md text-primary">{adminId}</div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setPasswordStatus({ type: '', message: '' })
+              setPasswordCurrent('')
+              setPasswordNext('')
+              setIsChangePasswordOpen(true)
+            }}
+            className="border border-outline-variant px-6 py-3 font-label-md text-label-md hover:border-primary transition-colors"
+          >
+            Change Password
+          </button>
+        </div>
       </main>
+
+      {isChangePasswordOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
+          <button
+            type="button"
+            className="absolute inset-0 bg-black/50"
+            aria-label="Close change password dialog"
+            onClick={() => setIsChangePasswordOpen(false)}
+          />
+
+          <div className="relative w-full max-w-lg bg-white border border-outline-variant p-8">
+            <div className="flex items-start justify-between gap-6">
+              <div>
+                <h2 className="font-headline-sm text-headline-sm text-primary">Change Password</h2>
+                <p className="font-body-md text-body-md text-on-surface-variant mt-1">Update your admin password.</p>
+              </div>
+              <button
+                type="button"
+                className="text-on-surface-variant hover:text-on-surface transition-colors"
+                onClick={() => setIsChangePasswordOpen(false)}
+                aria-label="Close"
+              >
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <form className="mt-8 flex flex-col gap-5" onSubmit={handleChangePassword}>
+              <div className="flex flex-col gap-2">
+                <label className="font-label-sm text-label-sm text-on-surface-variant uppercase" htmlFor="pw-current">
+                  Current Password
+                </label>
+                <input
+                  id="pw-current"
+                  className="bg-white border border-outline-variant px-4 py-3 rounded-none focus:ring-0 focus:border-primary font-label-md text-label-md"
+                  type="password"
+                  value={passwordCurrent}
+                  onChange={(event) => setPasswordCurrent(event.target.value)}
+                  autoComplete="current-password"
+                  required
+                />
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <label className="font-label-sm text-label-sm text-on-surface-variant uppercase" htmlFor="pw-next">
+                  New Password
+                </label>
+                <input
+                  id="pw-next"
+                  className="bg-white border border-outline-variant px-4 py-3 rounded-none focus:ring-0 focus:border-primary font-label-md text-label-md"
+                  type="password"
+                  value={passwordNext}
+                  onChange={(event) => setPasswordNext(event.target.value)}
+                  autoComplete="new-password"
+                  required
+                />
+              </div>
+
+              {passwordStatus.message && (
+                <p
+                  className="font-body-md text-body-md"
+                  style={{ color: passwordStatus.type === 'success' ? '#166534' : '#b91c1c' }}
+                >
+                  {passwordStatus.message}
+                </p>
+              )}
+
+              <div className="flex items-center justify-end gap-4">
+                <button
+                  type="button"
+                  onClick={() => setIsChangePasswordOpen(false)}
+                  className="border border-outline-variant px-6 py-3 font-label-md text-label-md hover:border-primary transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="border border-outline-variant px-6 py-3 font-label-md text-label-md hover:border-primary transition-colors"
+                >
+                  Update
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       <div className="fixed bottom-0 left-0 w-full h-1 bg-primary" />
     </div>
