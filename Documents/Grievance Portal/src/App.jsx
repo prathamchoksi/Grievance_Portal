@@ -1,20 +1,24 @@
+import { Suspense, lazy } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
-import Landing from './pages/Landing.jsx'
-import Categories from './pages/Categories.jsx'
-import Submit from './pages/Submit.jsx'
-import Login from './pages/Login.jsx'
-import Admin from './pages/Admin.jsx'
+
+const Landing = lazy(() => import('./pages/Landing.jsx'))
+const Categories = lazy(() => import('./pages/Categories.jsx'))
+const Submit = lazy(() => import('./pages/Submit.jsx'))
+const Login = lazy(() => import('./pages/Login.jsx'))
+const Admin = lazy(() => import('./pages/Admin.jsx'))
 
 function App() {
   return (
-    <Routes>
-      <Route path="/" element={<Landing />} />
-      <Route path="/categories" element={<Categories />} />
-      <Route path="/submit/:category" element={<Submit />} />
-      <Route path="/login" element={<Login />} />
-      <Route path="/admin" element={<Admin />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
-    </Routes>
+    <Suspense fallback={null}>
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route path="/categories" element={<Categories />} />
+        <Route path="/submit/:category" element={<Submit />} />
+        <Route path="/login" element={<Login />} />
+        <Route path="/admin" element={<Admin />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </Suspense>
   )
 }
 
